@@ -22,7 +22,7 @@
   const totalXP = s => Object.values(s.xpBy || {}).reduce((a, b) => a + b, 0);
   let S = load();
   if (!S.xpBy) { S.xpBy = S.xp ? { [DEV]: S.xp } : {}; }
-  function fresh() { return { v: 1, start: null, done: {}, cards: {}, xp: 0, days: {}, log: [], writing: {}, active: null, rate: 0.9 }; }
+  function fresh() { return { v: 1, start: null, done: {}, cards: {}, xp: 0, days: {}, log: [], writing: {}, notes: {}, fig: {}, active: null, rate: 0.9 }; }
   function load() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v) return Object.assign(fresh(), s); } catch (e) {} return fresh(); }
   function save(quiet) { S.u = Date.now(); if (S.active) S.active.u = S.u; try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save – storage full?'); } if (!quiet) syncSoon(); }
 
@@ -50,6 +50,8 @@
     const k = l => `${l.n}|${l.date}|${l.min}|${l.xp}`, seen = new Set(), log = [];
     for (const l of [...b.log, ...a.log]) if (!seen.has(k(l))) { seen.add(k(l)); log.push(l); }
     m.log = log;
+    m.notes = { ...(b.notes || {}) }; for (const [id, x] of Object.entries(a.notes || {})) if (!m.notes[id] || (x.t || 0) >= (m.notes[id].t || 0)) m.notes[id] = x;
+    m.fig = { ...(b.fig || {}), ...(a.fig || {}) };
     m.writing = { ...b.writing }; for (const [n, w] of Object.entries(a.writing)) if (!m.writing[n] || (w.t || 0) >= (m.writing[n].t || 0)) m.writing[n] = w;
     const act = [a.active, b.active].filter(x => x && !m.done[x.n]).sort((x, y) => (y.u || 0) - (x.u || 0));
     m.active = act[0] || null;
@@ -96,6 +98,40 @@
   function stemOf(de) { let w = variants(de)[0].replace(/^(der|die|das|sich) /, '').split(' ')[0].toLowerCase().replace(/[^a-zäöüß]/g, ''); return w.length > 5 ? w.slice(0, w.length - 2) : w; }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const deHtml = de => { const g = gender(de); return g ? `<span class="${g}">${esc(de)}</span>` : esc(de); };
+  // Big word with the plural as its own tap-to-hear part: "der Tisch" + ", die Tische 🔊"
+  function deBig(de) {
+    const m = de.match(/^((?:der|die|das) [^,]+), (die [^/(,]+)(.*)$/);
+    if (!m) return deHtml(de);
+    const g = gender(de);
+    return `<span class="${g}">${esc(m[1])}</span><span class="pl" data-say="${esc(m[2].trim())}" title="Tap to hear the plural">, ${esc(m[2].trim())} <span class="plspk">🔊</span></span>${m[3] ? '<span class="muted">' + esc(m[3]) + '</span>' : ''}`;
+  }
+  const PICS = window.PICS || {};
+  const pic = (id, size) => PICS[id] ? `<img class="pic" src="img/${PICS[id]}.svg" alt="" width="${size}" height="${size}">` : '';
+  const FIG_DEF = { der: '🦁', die: '🦋', das: '🐣' };
+  const FIG_OPT = { der: ['🦁', '🐻', '🤴', '🚀', '🌵'], die: ['🦋', '👸', '🌙', '🐞', '🌺'], das: ['🐣', '🧸', '⚽', '🎁', '🍀'] };
+  const fig = g => (S.fig && S.fig[g]) || FIG_DEF[g];
+  const gcls = de => { const g = gender(de); return g ? ' g-' + g : ''; };
+  const figTag = de => { const g = gender(de); return g ? `<span class="gfig ${g}" title="${g}-word: picture it with ${fig(g)}">${g} ${fig(g)}</span>` : ''; };
+  function merkHtml(id) {
+    const n = S.notes && S.notes[id];
+    return `<div class="merk" id="merk">${n && n.x ? `<span>💡 <b>Mein Merkbild:</b> ${esc(n.x)}</span> <button class="btn ghost small" id="merkedit" title="Change">✎</button>` : '<button class="btn ghost small" id="merkedit">✎ Mein Merkbild</button>'}</div>`;
+  }
+  function wireMerk(id, onSaved) {
+    const b = document.getElementById('merkedit'); if (!b) return;
+    b.onclick = e => { e.stopPropagation(); openMerk(id, onSaved); };
+  }
+  function openMerk(id, onSaved, prompt) {
+    const box = document.getElementById('merk'); if (!box) return;
+    const d = cardData(id), n = (S.notes && S.notes[id]) || {};
+    box.innerHTML = `<div style="text-align:left">${prompt ? '<p class="small"><b>This word is hard for you.</b> Make a picture in your head and write it down: a Persian or English word that sounds similar, a funny scene, a place you know.</p>' : ''}
+      <p class="small muted" style="margin:0 0 6px">Example: <i>die Treppe</i> sounds like <i>trap</i>: I am trapped on the stairs.</p>
+      <textarea id="merktx" style="min-height:80px" placeholder="${esc(head(d.de))} reminds me of …">${esc(n.x || '')}</textarea>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="merksave">Save</button><button class="btn ghost" id="merkskip">${prompt ? 'Skip' : 'Cancel'}</button></div></div>`;
+    const tx = document.getElementById('merktx'); tx.focus();
+    const done = saved => { box.outerHTML = merkHtml(id); wireMerk(id, onSaved); if (onSaved) onSaved(saved); };
+    document.getElementById('merksave').onclick = () => { S.notes = S.notes || {}; const x = tx.value.trim(); if (x) S.notes[id] = { x, t: Date.now() }; else delete S.notes[id]; save(); done(true); };
+    document.getElementById('merkskip').onclick = () => done(false);
+  }
 
   function nextStory() { for (const s of ST) if (!S.done[s.n] && s.n >= (S.start || 1)) return s; return null; }
   function addCard(id, box) { if (!S.cards[id]) S.cards[id] = { b: box || 1, d: Date.now() + BOX_WAIT[box || 1], r: 0, w: 0 }; }
@@ -296,6 +332,8 @@
         <div class="card"><h3>Punkte</h3><div class="big-num">⭐ ${S.xp}</div></div>
         <div class="card"><h3>Kapitel</h3><div class="big-num">🏅 ${chapters}</div><div class="muted small">finished in the app</div></div>
       </div>
+      <div class="card"><h3>der · die · das pictures</h3><p class="small muted">Each article has one fixed picture. When you learn a word, imagine it together with its picture: <i>der Koffer</i> → a lion carrying a suitcase.</p>
+        ${['der', 'die', 'das'].map(g => `<div class="row" style="margin:6px 0"><b class="${g}" style="width:40px">${g}</b>${FIG_OPT[g].map(f => `<button class="btn ${fig(g) === f ? 'primary' : ''}" data-fig="${g}" data-f="${f}" style="min-width:48px;padding:6px">${f}</button>`).join('')}</div>`).join('')}</div>
       <div class="card"><h3>Stimme</h3><p class="small muted">Voice: ${voice ? esc(voice.name) : 'no German voice found – install one in your system settings'}</p>
         <div class="row"><span class="small">Speed</span><input type="range" id="rate" min="0.6" max="1.2" step="0.05" value="${S.rate}" class="grow"><button class="btn" data-say="Hallo! Ich bin Mia. Ich wohne in Freiburg.">🔊 Test</button></div></div>
       <div class="card"><h3>Start story</h3><p class="small muted">Currently from story ${S.start || '–'}. Change it if you want to jump ahead.</p>
@@ -313,9 +351,11 @@
       </div>
       <div class="card"><h3>Backup file</h3><p class="small muted">Extra safety: save all your progress as a file.</p>
         <div class="row wrap"><button class="btn" id="exp">⬇ Save backup</button><label class="btn">⬆ Load backup<input type="file" id="imp" accept=".json" hidden></label></div></div>
-      <button class="btn ghost" id="reset">Reset everything</button>`;
+      <button class="btn ghost" id="reset">Reset everything</button>
+      <p class="small muted">Pictures: Twemoji by Twitter/X and contributors, CC BY 4.0. Stories: Mias Jahr in Freiburg.</p>`;
     const tg = document.getElementById('tokgo');
     if (tg) tg.onclick = async () => { const t = document.getElementById('tok').value.trim(); if (t.length < 20) return toast('Paste the whole token'); SY = { token: t }; saveSY(); go('more'); await sync(true); if (syncErr) { SY = {}; saveSY(); toast(syncErr); go('more'); } };
+    document.querySelectorAll('[data-fig]').forEach(b => (b.onclick = () => { S.fig = S.fig || {}; S.fig[b.dataset.fig] = b.dataset.f; save(); go('more'); }));
     const sn = document.getElementById('syncnow'); if (sn) sn.onclick = () => sync(true);
     const so = document.getElementById('syncoff'); if (so) so.onclick = () => { if (confirm('Stop syncing on this device? Your progress stays here and on GitHub.')) { SY = {}; saveSY(); go('more'); } };
     document.getElementById('rate').oninput = e => { S.rate = +e.target.value; save(); };
@@ -357,17 +397,18 @@
   // --- flash card (shared by review + new words) ---
   function flash(el, queue, opts, onDone) {
     // queue: card ids. opts.requeue: wrong ones come back. opts.onGrade(id, ok)
-    let i = 0, right = 0; const total = queue.length;
+    let i = 0, right = 0; const total = queue.length, misses = {}, asked = {};
     const show = () => {
       if (i >= queue.length) return onDone(right);
       const id = queue[i], d = cardData(id), isNoun = !!gender(d.de);
       el.innerHTML = `<div class="card center">
         <div class="muted small">${Math.min(i + 1, total)} / ${total}${i >= total ? ' · nochmal' : ''}</div>
-        <div class="word" style="font-size:26px">${esc(d.en)}</div>
-        <p class="muted small">${isNoun ? 'Noun: with der / die / das' : d.t === 'c' ? 'Phrase' : '&nbsp;'}</p>
+        ${PICS[id] ? `<div style="margin:6px 0">${pic(id, 120)}</div><p class="muted small">What is this in German?${isNoun ? ' With der / die / das.' : ''} <button class="btn ghost small" id="hint" style="min-height:0;padding:2px 6px">English?</button><span id="hintx" hidden> ${esc(d.en)}</span></p>`
+          : `<div class="word" style="font-size:26px">${esc(d.en)}</div><p class="muted small">${isNoun ? 'Noun: with der / die / das' : d.t === 'c' ? 'Phrase' : '&nbsp;'}</p>`}
         <input type="text" id="ans" placeholder="Type it, or just think of it" autocomplete="off" autocapitalize="off" spellcheck="false">
         <div class="gap"></div><button class="btn primary big" id="show">Zeigen</button></div>`;
       const inp = document.getElementById('ans'); inp.focus();
+      const hb = document.getElementById('hint'); if (hb) hb.onclick = () => { document.getElementById('hintx').hidden = false; hb.remove(); inp.focus(); };
       const reveal = () => {
         const typed = norm(inp.value), vs = variants(d.de).map(norm);
         let verdict = '';
@@ -377,19 +418,28 @@
           else verdict = `<div class="no">You wrote: ${esc(inp.value)}</div>`;
         }
         const autoOk = typed && vs.includes(typed);
-        el.innerHTML = `<div class="card center">
-          <div class="muted small">${esc(d.en)}</div>
-          <div class="word">${deHtml(d.de)} <button class="btn icon ghost" data-say="${esc(head(d.de))}">🔊</button></div>
+        el.innerHTML = `<div class="card center${gcls(d.de)}">
+          ${pic(id, 72)}
+          <div class="muted small">${esc(d.en)} ${figTag(d.de)}</div>
+          <div class="word" style="font-size:26px">${deBig(d.de)}<button class="btn icon ghost" data-say="${esc(head(d.de))}" style="vertical-align:middle;min-height:40px;width:40px">🔊</button></div>
           ${verdict}
           ${d.ex ? `<p class="ex" data-say="${esc(d.ex)}" style="cursor:pointer">„${esc(d.ex)}“ 🔊</p>` : ''}
-          <div class="grid2"><button class="btn bad big" id="no">✗ Nochmal <span class="small" style="opacity:.7">1</span></button><button class="btn good big" id="yes">✓ Gewusst <span class="small" style="opacity:.7">2</span></button></div>
-          <p class="muted small" style="margin:8px 0 0">Keys: 1 = Nochmal · 2 = Gewusst · Enter = ${typed && !autoOk ? 'Nochmal' : 'Gewusst'}</p></div>`;
+          ${merkHtml(id)}
+          <div class="grid2"><button class="btn bad big" id="no">✗ Nochmal</button><button class="btn good big" id="yes">✓ Gewusst</button></div>
+          <p class="muted small keyhint" style="margin:8px 0 0">Keys: 1 = Nochmal · 2 = Gewusst · Enter = ${typed && !autoOk ? 'Nochmal' : 'Gewusst'}</p></div>`;
         say(head(d.de));
-        const act = ok => { document.onkeydown = null; opts.onGrade(id, ok); if (ok) right++; else if (opts.requeue) queue.push(id); i++; save(); show(); };
+        wireMerk(id);
+        const act = ok => {
+          document.onkeydown = null; opts.onGrade(id, ok); if (ok) right++; else { misses[id] = (misses[id] || 0) + 1; if (opts.requeue) queue.push(id); }
+          i++; save();
+          const hard = !ok && !(S.notes && S.notes[id]) && ((S.cards[id] && S.cards[id].w >= 2) || misses[id] >= 2) && !asked[id];
+          if (hard) { asked[id] = true; el.querySelector('.grid2').remove(); const kh = el.querySelector('.keyhint'); if (kh) kh.remove(); openMerk(id, () => show(), true); return; }
+          show();
+        };
         document.getElementById('yes').onclick = () => act(true);
         document.getElementById('no').onclick = () => act(false);
         document.onkeydown = e => {
-          if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+          if (e.repeat || e.ctrlKey || e.altKey || e.metaKey || /^(TEXTAREA|INPUT)$/.test(e.target.tagName)) return;
           const k = e.key === 'Enter' ? (typed && !autoOk ? '1' : '2') : e.key; // number row and number pad both give '1' / '2'
           if (k === '1' || k === '2') { e.preventDefault(); act(k === '2'); }
         };
@@ -425,18 +475,22 @@
       if (a.st.learn >= all.length) return check();
       const id = all[a.st.learn], d = cardData(id);
       el.innerHTML = `<p class="muted small">Look, listen, say it out loud twice. ${a.st.learn + 1} / ${all.length}${d.t === 'x' ? ' · extra word from the A1/A2 list' : ''}</p>
-        <div class="card center">
-          <div class="word" style="font-size:34px">${deHtml(d.de)}</div>
+        <div class="card center${gcls(d.de)}">
+          ${pic(id, 130)}
+          ${figTag(d.de) ? `<div>${figTag(d.de)}</div>` : ''}
+          <div class="word" style="font-size:34px">${deBig(d.de)}</div>
           <button class="btn" data-say="${esc(head(d.de))}">🔊 Anhören</button>
           <p style="font-size:20px;margin:14px 0 6px">${esc(d.en)}</p>
           ${d.ex ? `<p class="ex muted" data-say="${esc(d.ex)}" style="cursor:pointer">„${esc(d.ex)}“ 🔊</p>` : ''}
+          ${merkHtml(id)}
         </div>
         <div class="grid2"><button class="btn big" id="known">Kenne ich schon</button><button class="btn primary big" id="nx">Weiter →</button></div>`;
       say(head(d.de)).then(() => d.ex && setTimeout(() => say(d.ex, { queue: true }), 300));
+      wireMerk(id);
       const go2 = known => { if (known) { addCard(id, 3); } a.st.learn++; save(); learnOne(); };
       document.getElementById('nx').onclick = () => go2(false);
       document.getElementById('known').onclick = () => go2(true);
-      document.onkeydown = e => { if (e.key === 'Enter') { document.onkeydown = null; go2(false); } };
+      document.onkeydown = e => { if (e.key === 'Enter' && !/^(TEXTAREA|INPUT)$/.test(e.target.tagName)) { document.onkeydown = null; go2(false); } };
     };
     const check = () => {
       document.onkeydown = null;
@@ -444,7 +498,7 @@
       if (!q.length) return finishWords();
       el.innerHTML = '';
       const intro = document.createElement('div');
-      intro.innerHTML = '<p class="muted small">Now from memory: English → German. Missed words come back at the end.</p>';
+      intro.innerHTML = '<p class="muted small">Now from memory: say the German for each picture or English word. Missed words come back at the end.</p>';
       el.before(intro);
       flash(el, q.slice(), { requeue: true, onGrade: (id, ok) => { if (ok && !S.cards[id]) { addCard(id, 1); addXP(XP.learn); } } }, () => { intro.remove(); finishWords(); });
     };

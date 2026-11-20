@@ -126,12 +126,21 @@ nav.tabbar svg { width: 24px; height: 24px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 a { color: var(--accent); }
 audio { width: 100%; margin-top: 8px; }
+.card.g-der { border: 3px solid var(--der); } .card.g-die { border: 3px solid var(--die); } .card.g-das { border: 3px solid var(--das); }
+.gfig { display: inline-block; font-size: 13px; font-weight: 700; padding: 2px 10px; border-radius: 999px; border: 1.5px solid currentColor; margin: 2px 0; }
+.pic { display: block; margin: 4px auto 6px; }
+.pl { color: var(--muted); font-size: .62em; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.pl:hover { color: var(--ink); } .plspk { font-size: .8em; }
+.merk { margin: 4px 0 12px; font-size: 15px; text-align: left; }
+.merk > span { display: inline-block; background: var(--warm-soft); border-radius: 8px; padding: 4px 8px; }
+
 </style>
 </head>
 <body>
 <div id="app"></div>
 <nav class="tabbar" id="tabbar"></nav>
 <script src="content.js"></script>
+<script src="pics.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
