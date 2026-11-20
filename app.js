@@ -94,7 +94,9 @@
   const gender = de => (de.match(/^(der|die|das) /) || [])[1] || '';
   const head = de => de.split(/,|\(/)[0].trim(); // "der Tisch, die Tische" -> "der Tisch"
   const variants = de => head(de).split('/').map(x => x.trim()).filter(Boolean);
-  const norm = s => s.toLowerCase().replace(/[.,!?…:;„“"'()]/g, '').replace(/\s+/g, ' ').trim();
+  // Punctuation never counts: ! ? . , - – … quotes and brackets are ignored, and so are the spaces around them ("T-Shirt" = "tshirt" = "t shirt").
+  const norm = s => s.toLowerCase().replace(/[.,!?¿¡…:;„“”"'’‘‚«»()[\]{}\-–—_*~]/g, ' ').replace(/\s+/g, ' ').trim();
+  const same = (a, b) => a.replace(/ /g, '') === b.replace(/ /g, '');
   function stemOf(de) { let w = variants(de)[0].replace(/^(der|die|das|sich) /, '').split(' ')[0].toLowerCase().replace(/[^a-zäöüß]/g, ''); return w.length > 5 ? w.slice(0, w.length - 2) : w; }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const deHtml = de => { const g = gender(de); return g ? `<span class="${g}">${esc(de)}</span>` : esc(de); };
@@ -413,11 +415,11 @@
         const typed = norm(inp.value), vs = variants(d.de).map(norm);
         let verdict = '';
         if (typed) {
-          if (vs.includes(typed)) verdict = '<div class="ok">✓ Richtig!</div>';
-          else if (vs.some(v => v.replace(/^(der|die|das) /, '') === typed.replace(/^(der|die|das) /, ''))) verdict = `<div class="no">Almost: the article is <span class="${gender(d.de)}">${gender(d.de)}</span></div>`;
+          if (vs.some(v => same(v, typed))) verdict = '<div class="ok">✓ Richtig!</div>';
+          else if (vs.some(v => same(v.replace(/^(der|die|das) /, ''), typed.replace(/^(der|die|das) /, '')))) verdict = `<div class="no">Almost: the article is <span class="${gender(d.de)}">${gender(d.de)}</span></div>`;
           else verdict = `<div class="no">You wrote: ${esc(inp.value)}</div>`;
         }
-        const autoOk = typed && vs.includes(typed);
+        const autoOk = typed && vs.some(v => same(v, typed));
         el.innerHTML = `<div class="card center${gcls(d.de)}">
           ${pic(id, 72)}
           <div class="muted small">${esc(d.en)} ${figTag(d.de)}</div>
