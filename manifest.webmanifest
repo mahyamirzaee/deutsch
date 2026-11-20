@@ -1,12 +1,16 @@
 {
-  "name": "Mias Jahr – Deutsch lernen",
-  "short_name": "Mias Jahr",
+  "name": "Wortgarten",
+  "short_name": "Wortgarten",
+  "description": "German with Mia's year in Freiburg: words, reading, writing, speaking.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f7f4ee",
-  "theme_color": "#0f766e",
+  "background_color": "#FAEEDA",
+  "theme_color": "#3B6D11",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
   ]
 }

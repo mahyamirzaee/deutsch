@@ -18,10 +18,71 @@
   const XP = { review: 1, learn: 2, read: 10, write: 15, speak: 20, session: 20 };
 
   // ---------- state ----------
+  const DEV = (() => { try { let d = localStorage.getItem('wortgarten-device'); if (!d) { d = Math.random().toString(36).slice(2, 10); localStorage.setItem('wortgarten-device', d); } return d; } catch (e) { return 'x'; } })();
+  const totalXP = s => Object.values(s.xpBy || {}).reduce((a, b) => a + b, 0);
   let S = load();
+  if (!S.xpBy) { S.xpBy = S.xp ? { [DEV]: S.xp } : {}; }
   function fresh() { return { v: 1, start: null, done: {}, cards: {}, xp: 0, days: {}, log: [], writing: {}, active: null, rate: 0.9 }; }
   function load() { try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v) return Object.assign(fresh(), s); } catch (e) {} return fresh(); }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save – storage full?'); } }
+  function save(quiet) { S.u = Date.now(); if (S.active) S.active.u = S.u; try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Could not save – storage full?'); } if (!quiet) syncSoon(); }
+
+  // ---------- sync between devices (a secret GitHub gist on her own account) ----------
+  const SKEY = 'wortgarten-sync'; // { token, gist, last } – kept apart from the backup file
+  const SFILE = 'wortgarten-progress.json';
+  let SY = (() => { try { return JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { return {}; } })();
+  const saveSY = () => { try { localStorage.setItem(SKEY, JSON.stringify(SY)); } catch (e) {} };
+  let syncTimer = null, syncing = false, syncErr = '';
+  function syncSoon() { if (!SY.token) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), 8000); }
+  async function gh(path, opts = {}) {
+    const r = await fetch('https://api.github.com' + path, { ...opts, headers: { Authorization: 'Bearer ' + SY.token, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' } });
+    if (!r.ok) throw new Error(r.status === 401 ? 'The token is not valid any more.' : 'GitHub said ' + r.status);
+    return r.json();
+  }
+  function merge(a, b) { // combine two progress states without losing anything
+    if (!b || !b.v) return a; if (!a || !a.v) return b;
+    const m = Object.assign(fresh(), a);
+    m.start = a.start || b.start;
+    m.done = { ...b.done }; for (const [n, d] of Object.entries(a.done)) if (!m.done[n] || m.done[n].skipped) m.done[n] = d;
+    m.cards = { ...b.cards }; for (const [id, c] of Object.entries(a.cards)) { const o = m.cards[id]; if (!o || c.r + c.w > o.r + o.w || (c.r + c.w === o.r + o.w && c.d > o.d)) m.cards[id] = c; }
+    m.xpBy = { ...(b.xpBy || {}) }; for (const [d, n] of Object.entries(a.xpBy || {})) m.xpBy[d] = Math.max(n, m.xpBy[d] || 0);
+    m.xp = totalXP(m);
+    m.days = { ...b.days }; for (const [d, n] of Object.entries(a.days)) m.days[d] = Math.max(n, m.days[d] || 0);
+    const k = l => `${l.n}|${l.date}|${l.min}|${l.xp}`, seen = new Set(), log = [];
+    for (const l of [...b.log, ...a.log]) if (!seen.has(k(l))) { seen.add(k(l)); log.push(l); }
+    m.log = log;
+    m.writing = { ...b.writing }; for (const [n, w] of Object.entries(a.writing)) if (!m.writing[n] || (w.t || 0) >= (m.writing[n].t || 0)) m.writing[n] = w;
+    const act = [a.active, b.active].filter(x => x && !m.done[x.n]).sort((x, y) => (y.u || 0) - (x.u || 0));
+    m.active = act[0] || null;
+    m.u = Math.max(a.u || 0, b.u || 0);
+    return m;
+  }
+  async function sync(manual) {
+    if (!SY.token || syncing) return; syncing = true; syncErr = '';
+    try {
+      if (!SY.gist) {
+        const list = await gh('/gists?per_page=100');
+        const found = list.find(g => g.files && g.files[SFILE]);
+        SY.gist = found ? found.id : (await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Wortgarten progress (do not edit)', public: false, files: { [SFILE]: { content: JSON.stringify(S) } } }) })).id;
+        saveSY();
+      }
+      const g = await gh('/gists/' + SY.gist);
+      let remote = null; try { remote = JSON.parse(g.files[SFILE].content); } catch (e) {}
+      const before = JSON.stringify(S);
+      S = merge(S, remote); save(true);
+      if (JSON.stringify(remote) !== JSON.stringify(S)) await gh('/gists/' + SY.gist, { method: 'PATCH', body: JSON.stringify({ files: { [SFILE]: { content: JSON.stringify(S) } } }) });
+      SY.last = Date.now(); saveSY();
+      if (before !== JSON.stringify(S) && view !== 'session') render();
+      if (manual) toast('Synced ✓');
+    } catch (e) { syncErr = e.message || 'Sync failed'; if (manual) toast(syncErr); }
+    syncing = false;
+    if (view === 'more') { const el = document.getElementById('syncst'); if (el) el.innerHTML = syncStatus(); }
+  }
+  function syncStatus() {
+    if (!SY.token) return 'Not connected.';
+    if (syncErr) return `<span class="no">${esc(syncErr)}</span>`;
+    return SY.last ? `<span class="ok">✓ Connected</span> · last sync ${new Date(SY.last).toLocaleString('de-DE', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}` : 'Connecting…';
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); else if (syncTimer) { clearTimeout(syncTimer); sync(); } });
   const today = () => new Date().toLocaleDateString('sv'); // YYYY-MM-DD
 
   // ---------- content helpers ----------
@@ -57,7 +118,7 @@
     const ds = Object.keys(S.days).sort().slice(-14); if (!ds.length) return 0;
     return ds.reduce((a, d) => a + S.days[d], 0) / ds.length;
   }
-  function addXP(n) { S.xp += n; if (S.active) S.active.xp = (S.active.xp || 0) + n; }
+  function addXP(n) { S.xpBy = S.xpBy || {}; S.xpBy[DEV] = (S.xpBy[DEV] || 0) + n; S.xp = totalXP(S); if (S.active) S.active.xp = (S.active.xp || 0) + n; }
 
   // ---------- speech ----------
   let voice = null;
@@ -239,15 +300,30 @@
         <div class="row"><span class="small">Speed</span><input type="range" id="rate" min="0.6" max="1.2" step="0.05" value="${S.rate}" class="grow"><button class="btn" data-say="Hallo! Ich bin Mia. Ich wohne in Freiburg.">🔊 Test</button></div></div>
       <div class="card"><h3>Start story</h3><p class="small muted">Currently from story ${S.start || '–'}. Change it if you want to jump ahead.</p>
         <div class="row"><input type="number" id="st" min="1" max="100" value="${S.start || 1}" style="max-width:120px"><button class="btn" id="stb">Save</button></div></div>
-      <div class="card"><h3>Backup</h3><p class="small muted">Progress is saved on this device. To move it between phone and computer, save a backup file here and load it on the other device. (Recordings stay on the device.)</p>
+      <div class="card"><h3>Sync phone ↔ computer</h3>
+        <p class="small muted">Your progress is kept in a private note on your GitHub account, so every device shows the same words, stories and points. Recordings stay on the device where you made them.</p>
+        <p class="small" id="syncst">${syncStatus()}</p>
+        ${SY.token ? `<div class="row wrap"><button class="btn" id="syncnow">↻ Sync now</button><button class="btn ghost" id="syncoff">Disconnect</button></div>` : `
+        <ol class="small" style="padding-left:20px;margin:0 0 10px">
+          <li>Open <a href="https://github.com/settings/tokens/new?scopes=gist&description=Wortgarten" target="_blank" rel="noopener">this GitHub page</a> (signed in).</li>
+          <li>Expiration: <b>No expiration</b>. Only <b>gist</b> is ticked. Click <b>Generate token</b>.</li>
+          <li>Copy the token (starts with <code>ghp_</code>) and paste it here. Do the same on your other device.</li>
+        </ol>
+        <div class="row"><input type="text" id="tok" placeholder="ghp_…" autocomplete="off" spellcheck="false"><button class="btn primary" id="tokgo">Connect</button></div>`}
+      </div>
+      <div class="card"><h3>Backup file</h3><p class="small muted">Extra safety: save all your progress as a file.</p>
         <div class="row wrap"><button class="btn" id="exp">⬇ Save backup</button><label class="btn">⬆ Load backup<input type="file" id="imp" accept=".json" hidden></label></div></div>
       <button class="btn ghost" id="reset">Reset everything</button>`;
+    const tg = document.getElementById('tokgo');
+    if (tg) tg.onclick = async () => { const t = document.getElementById('tok').value.trim(); if (t.length < 20) return toast('Paste the whole token'); SY = { token: t }; saveSY(); go('more'); await sync(true); if (syncErr) { SY = {}; saveSY(); toast(syncErr); go('more'); } };
+    const sn = document.getElementById('syncnow'); if (sn) sn.onclick = () => sync(true);
+    const so = document.getElementById('syncoff'); if (so) so.onclick = () => { if (confirm('Stop syncing on this device? Your progress stays here and on GitHub.')) { SY = {}; saveSY(); go('more'); } };
     document.getElementById('rate').oninput = e => { S.rate = +e.target.value; save(); };
     document.getElementById('stb').onclick = () => {
       const n = Math.max(1, Math.min(100, +document.getElementById('st').value || 1)); S.start = n;
       ST.forEach(s => { if (s.n < n && !S.done[s.n]) S.done[s.n] = { date: today(), skipped: true }; if (s.n >= n && S.done[s.n] && S.done[s.n].skipped) delete S.done[s.n]; });
       save(); toast('Saved'); };
-    document.getElementById('exp').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: 'application/json' })); a.download = `mias-jahr-backup-${today()}.json`; a.click(); };
+    document.getElementById('exp').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: 'application/json' })); a.download = `wortgarten-backup-${today()}.json`; a.click(); };
     document.getElementById('imp').onchange = async e => { try { const s = JSON.parse(await e.target.files[0].text()); if (!s.v) throw 0; S = Object.assign(fresh(), s); save(); toast('Backup loaded'); go('home'); } catch (err) { toast('That file is not a backup'); } };
     document.getElementById('reset').onclick = () => { if (confirm('Delete all progress on this device?')) { S = fresh(); save(); go('home'); } };
   }
@@ -441,7 +517,7 @@
       <button class="btn primary big" id="nx">Weiter: Sprechen</button>`;
     const txt = document.getElementById('txt');
     const upd = () => {
-      W.text = txt.value;
+      W.text = txt.value; W.t = Date.now();
       const words = (txt.value.match(/[A-Za-zÄÖÜäöüß]+/g) || []).length, sents = (txt.value.match(/[.!?](\s|$)/g) || []).length;
       const low = txt.value.toLowerCase(), used = newWords.filter(w => { const st = stemOf(w); return st.length > 2 && low.includes(st); });
       document.getElementById('cnt').textContent = `${words} words · ${sents} sentences`;
@@ -450,7 +526,7 @@
       save();
     };
     txt.oninput = upd; el.querySelectorAll('.sent').forEach(i => (i.oninput = upd)); upd();
-    document.getElementById('fix').oninput = e => { W.fixed = e.target.value; save(); };
+    document.getElementById('fix').oninput = e => { W.fixed = e.target.value; W.t = Date.now(); save(); };
     document.getElementById('claude').onclick = async () => {
       const all = [...W.sent.filter(Boolean).map((x, k) => `${k + 1}. ${x}`), W.sent.some(Boolean) ? '' : null, W.text].filter(x => x !== null).join('\n');
       const p = `I am learning German (level ${s.l}). Please correct my text.\n1) First give me ONLY the corrected text of the last paragraph, nothing else, so I can copy it.\n2) Then list my mistakes in simple English (max 5), with the rule.\nKeep my words and ideas; only fix mistakes. Task: ${prompt}\n\nMy text:\n${all}`;
@@ -569,4 +645,5 @@
   // ---------- boot ----------
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   render();
+  sync();
 })();
