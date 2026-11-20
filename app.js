@@ -75,7 +75,7 @@
       if (manual) toast('Synced ✓');
     } catch (e) { syncErr = e.message || 'Sync failed'; if (manual) toast(syncErr); }
     syncing = false;
-    if (view === 'more') { const el = document.getElementById('syncst'); if (el) el.innerHTML = syncStatus(); }
+    if (view === 'more' && !(document.activeElement && document.activeElement.id === 'tok')) render();
   }
   function syncStatus() {
     if (!SY.token) return 'Not connected.';
@@ -303,9 +303,9 @@
       <div class="card"><h3>Sync phone ↔ computer</h3>
         <p class="small muted">Your progress is kept in a private note on your GitHub account, so every device shows the same words, stories and points. Recordings stay on the device where you made them.</p>
         <p class="small" id="syncst">${syncStatus()}</p>
-        ${SY.token ? `<div class="row wrap"><button class="btn" id="syncnow">↻ Sync now</button><button class="btn ghost" id="syncoff">Disconnect</button></div>` : `
+        ${SY.token && !syncErr ? `<div class="row wrap"><button class="btn" id="syncnow">↻ Sync now</button><button class="btn ghost" id="syncoff">Disconnect</button></div>` : `
         <ol class="small" style="padding-left:20px;margin:0 0 10px">
-          <li>Open <a href="https://github.com/settings/tokens/new?scopes=gist&description=Wortgarten" target="_blank" rel="noopener">this GitHub page</a> (signed in).</li>
+          ${SY.token ? '<li><b>Paste a new token below to connect again.</b></li>' : ''}<li>Open <a href="https://github.com/settings/tokens/new?scopes=gist&description=Wortgarten" target="_blank" rel="noopener">this GitHub page</a> (signed in).</li>
           <li>Expiration: <b>No expiration</b>. Only <b>gist</b> is ticked. Click <b>Generate token</b>.</li>
           <li>Copy the token (starts with <code>ghp_</code>) and paste it here. Do the same on your other device.</li>
         </ol>
